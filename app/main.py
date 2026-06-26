@@ -390,8 +390,10 @@ app = FastAPI(title="CyberMesh CMDB Backend", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
+        "http://localhost:7443",
+        "http://127.0.0.1:7443",
+        "http://atos-cybermesh.portal.myatos.net:7443",
+        "http://4.201.56.241:7443",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
