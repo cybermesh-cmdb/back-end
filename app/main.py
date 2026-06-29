@@ -153,7 +153,11 @@ class LECLogCreate(BaseModel):
     last_event: str | None = None
     threshold_minutes: int = Field(default=60, ge=1)
     ip_lec: str | None = None
+    ip_host: str | None = None
     device_name: str | None = Field(default=None, max_length=255)
+    custom_name: str | None = Field(default=None, max_length=255)
+    hostname_lec: str | None = Field(default=None, max_length=255)
+    manufacturer: str | None = Field(default=None, max_length=255)
     status_lec: str | None = Field(default=None, max_length=20)
 
 
@@ -162,7 +166,11 @@ class LECLogUpdate(BaseModel):
     last_event: str | None = None
     threshold_minutes: int | None = Field(default=None, ge=1)
     ip_lec: str | None = None
+    ip_host: str | None = None
     device_name: str | None = Field(default=None, max_length=255)
+    custom_name: str | None = Field(default=None, max_length=255)
+    hostname_lec: str | None = Field(default=None, max_length=255)
+    manufacturer: str | None = Field(default=None, max_length=255)
     status_lec: str | None = Field(default=None, max_length=20)
 
 
@@ -177,7 +185,11 @@ class LECLog(BaseModel):
     hours_since: int | None
     threshold_minutes: int | None
     ip_lec: str | IPv4Address | IPv6Address | None
+    ip_host: str | IPv4Address | IPv6Address | None
     device_name: str | None
+    custom_name: str | None
+    hostname_lec: str | None
+    manufacturer: str | None
     status_lec: str | None
     status: str | None
     created_at: datetime | None
@@ -186,7 +198,8 @@ class LECLog(BaseModel):
 
 @contextmanager
 def get_conn():
-    logger.debug(f"[CONN] Tentando conectar com config: {DB_CONFIG}")
+    safe_db_config = {**DB_CONFIG, "password": "***" if DB_CONFIG.get("password") else None}
+    logger.debug(f"[CONN] Tentando conectar com config: {safe_db_config}")
     try:
         conn = psycopg.connect(**DB_CONFIG, row_factory=dict_row)
         logger.debug(f"[CONN] Conexão bem-sucedida!")
@@ -259,6 +272,20 @@ def resolve_lec_ip_select(columns: set[str]) -> str:
     if ip_column:
         return f"ll.{ip_column} AS ip_lec"
     return "NULL::text AS ip_lec"
+
+
+def resolve_lec_ip_host_select(columns: set[str]) -> str:
+    if "ip_host" in columns:
+        return "ll.ip_host"
+    if "ip_lec" in columns:
+        return "ll.ip_lec"
+    return "NULL::text"
+
+
+def resolve_lec_custom_name_select(columns: set[str]) -> str:
+    if "custom_name" in columns:
+        return "ll.custom_name"
+    return "t.customer_name"
 
 
 def sync_product_name_identity(cur: psycopg.Cursor) -> None:
@@ -1182,11 +1209,16 @@ def list_lec_logs(
             status_column = resolve_lec_status_column(cur)
             ip_select = resolve_lec_ip_select(lec_columns)
             device_select = "ll.device_name" if "device_name" in lec_columns else "NULL::text AS device_name"
+            ip_host_select = resolve_lec_ip_host_select(lec_columns)
+            custom_name_select = resolve_lec_custom_name_select(lec_columns)
+            hostname_select = "ll.hostname_lec" if "hostname_lec" in lec_columns else "NULL::text AS hostname_lec"
+            manufacturer_select = "ll.manufacturer" if "manufacturer" in lec_columns else "NULL::text AS manufacturer"
             query = """
                 SELECT
                     ll.id_lec,
                     ll.fk_tenant,
                     t.customer_name,
+                    {custom_name_select} AS custom_name,
                     ll.file_location,
                     ll.last_event,
                     ll.seconds_since,
@@ -1194,7 +1226,10 @@ def list_lec_logs(
                     ll.hours_since,
                     ll.threshold_minutes,
                     {ip_select},
+                    {ip_host_select} AS ip_host,
                     {device_select},
+                    {hostname_select},
+                    {manufacturer_select},
                     ll.{status_column} AS status_lec,
                     ll.{status_column} AS status,
                     ll.created_at,
@@ -1202,7 +1237,15 @@ def list_lec_logs(
                 FROM lec ll
                 LEFT JOIN tenants t ON ll.fk_tenant = t.id_tenants
                 WHERE 1=1
-            """.format(status_column=status_column, ip_select=ip_select, device_select=device_select)
+            """.format(
+                status_column=status_column,
+                ip_select=ip_select,
+                ip_host_select=ip_host_select,
+                device_select=device_select,
+                custom_name_select=custom_name_select,
+                hostname_select=hostname_select,
+                manufacturer_select=manufacturer_select,
+            )
             params = []
             
             if tenant_id:
@@ -1231,12 +1274,17 @@ def get_lec_log(lec_id: int) -> LECLog:
             status_column = resolve_lec_status_column(cur)
             ip_select = resolve_lec_ip_select(lec_columns)
             device_select = "ll.device_name" if "device_name" in lec_columns else "NULL::text AS device_name"
+            ip_host_select = resolve_lec_ip_host_select(lec_columns)
+            custom_name_select = resolve_lec_custom_name_select(lec_columns)
+            hostname_select = "ll.hostname_lec" if "hostname_lec" in lec_columns else "NULL::text AS hostname_lec"
+            manufacturer_select = "ll.manufacturer" if "manufacturer" in lec_columns else "NULL::text AS manufacturer"
             cur.execute(
                 """
                 SELECT
                     ll.id_lec,
                     ll.fk_tenant,
                     t.customer_name,
+                    {custom_name_select} AS custom_name,
                     ll.file_location,
                     ll.last_event,
                     ll.seconds_since,
@@ -1244,7 +1292,10 @@ def get_lec_log(lec_id: int) -> LECLog:
                     ll.hours_since,
                     ll.threshold_minutes,
                     {ip_select},
+                    {ip_host_select} AS ip_host,
                     {device_select},
+                    {hostname_select},
+                    {manufacturer_select},
                     ll.{status_column} AS status_lec,
                     ll.{status_column} AS status,
                     ll.created_at,
@@ -1252,7 +1303,15 @@ def get_lec_log(lec_id: int) -> LECLog:
                 FROM lec ll
                 LEFT JOIN tenants t ON ll.fk_tenant = t.id_tenants
                 WHERE ll.id_lec = %s
-                """.format(ip_select=ip_select, status_column=status_column, device_select=device_select),
+                """.format(
+                    ip_select=ip_select,
+                    ip_host_select=ip_host_select,
+                    status_column=status_column,
+                    device_select=device_select,
+                    custom_name_select=custom_name_select,
+                    hostname_select=hostname_select,
+                    manufacturer_select=manufacturer_select,
+                ),
                 (lec_id,)
             )
             row = cur.fetchone()
@@ -1273,6 +1332,9 @@ def create_lec_log(payload: LECLogCreate) -> LECLog:
                 ip_column = resolve_lec_ip_column(lec_columns)
                 has_ip_column = ip_column is not None
                 has_device_column = "device_name" in lec_columns
+                has_custom_name_column = "custom_name" in lec_columns
+                has_hostname_column = "hostname_lec" in lec_columns
+                has_manufacturer_column = "manufacturer" in lec_columns
                 # Verifica se o tenant existe
                 cur.execute("SELECT id_tenants FROM tenants WHERE id_tenants = %s", (payload.tenant_id,))
                 if not cur.fetchone():
@@ -1289,11 +1351,23 @@ def create_lec_log(payload: LECLogCreate) -> LECLog:
                 ]
                 if has_ip_column:
                     insert_columns.insert(4, ip_column)
-                    insert_values.insert(4, payload.ip_lec)
+                    insert_values.insert(4, payload.ip_lec or payload.ip_host)
                 if has_device_column:
                     status_idx = insert_columns.index(status_column)
                     insert_columns.insert(status_idx, "device_name")
                     insert_values.insert(status_idx, payload.device_name)
+                if has_custom_name_column:
+                    status_idx = insert_columns.index(status_column)
+                    insert_columns.insert(status_idx, "custom_name")
+                    insert_values.insert(status_idx, payload.custom_name)
+                if has_hostname_column:
+                    status_idx = insert_columns.index(status_column)
+                    insert_columns.insert(status_idx, "hostname_lec")
+                    insert_values.insert(status_idx, payload.hostname_lec)
+                if has_manufacturer_column:
+                    status_idx = insert_columns.index(status_column)
+                    insert_columns.insert(status_idx, "manufacturer")
+                    insert_values.insert(status_idx, payload.manufacturer)
 
                 returning_ip = f"{ip_column} AS ip_lec" if has_ip_column else "NULL::text AS ip_lec"
                 returning_device = "device_name" if has_device_column else "NULL::text AS device_name"
@@ -1319,17 +1393,20 @@ def create_lec_log(payload: LECLogCreate) -> LECLog:
             with conn.cursor() as cur:
                 lec_columns = get_lec_logs_columns(cur)
                 status_column = resolve_lec_status_column(cur)
-                ip_column = resolve_lec_ip_column(lec_columns)
-                has_ip_column = ip_column is not None
                 has_device_column = "device_name" in lec_columns
                 ip_select = resolve_lec_ip_select(lec_columns)
                 device_select = "ll.device_name" if has_device_column else "NULL::text AS device_name"
+                ip_host_select = resolve_lec_ip_host_select(lec_columns)
+                custom_name_select = resolve_lec_custom_name_select(lec_columns)
+                hostname_select = "ll.hostname_lec" if "hostname_lec" in lec_columns else "NULL::text AS hostname_lec"
+                manufacturer_select = "ll.manufacturer" if "manufacturer" in lec_columns else "NULL::text AS manufacturer"
                 cur.execute(
                     """
                     SELECT
                         ll.id_lec,
                         ll.fk_tenant,
                         t.customer_name,
+                        {custom_name_select} AS custom_name,
                         ll.file_location,
                         ll.last_event,
                         ll.seconds_since,
@@ -1337,7 +1414,10 @@ def create_lec_log(payload: LECLogCreate) -> LECLog:
                         ll.hours_since,
                         ll.threshold_minutes,
                         {ip_select},
+                        {ip_host_select} AS ip_host,
                         {device_select},
+                        {hostname_select},
+                        {manufacturer_select},
                         ll.{status_column} AS status_lec,
                         ll.{status_column} AS status,
                         ll.created_at,
@@ -1345,7 +1425,15 @@ def create_lec_log(payload: LECLogCreate) -> LECLog:
                     FROM lec ll
                     LEFT JOIN tenants t ON ll.fk_tenant = t.id_tenants
                     WHERE ll.id_lec = %s
-                    """.format(ip_select=ip_select, status_column=status_column, device_select=device_select),
+                    """.format(
+                        ip_select=ip_select,
+                        ip_host_select=ip_host_select,
+                        status_column=status_column,
+                        device_select=device_select,
+                        custom_name_select=custom_name_select,
+                        hostname_select=hostname_select,
+                        manufacturer_select=manufacturer_select,
+                    ),
                     (row["id_lec"],)
                 )
                 result = cur.fetchone()
@@ -1368,8 +1456,15 @@ def update_lec_log(lec_id: int, payload: LECLogUpdate) -> LECLog:
                 ip_column = resolve_lec_ip_column(lec_columns)
                 has_ip_column = ip_column is not None
                 has_device_column = "device_name" in lec_columns
+                has_custom_name_column = "custom_name" in lec_columns
+                has_hostname_column = "hostname_lec" in lec_columns
+                has_manufacturer_column = "manufacturer" in lec_columns
                 ip_select = resolve_lec_ip_select(lec_columns)
                 device_select = "ll.device_name" if has_device_column else "NULL::text AS device_name"
+                ip_host_select = resolve_lec_ip_host_select(lec_columns)
+                custom_name_select = resolve_lec_custom_name_select(lec_columns)
+                hostname_select = "ll.hostname_lec" if has_hostname_column else "NULL::text AS hostname_lec"
+                manufacturer_select = "ll.manufacturer" if has_manufacturer_column else "NULL::text AS manufacturer"
                 # Verifica se o log existe
                 cur.execute("SELECT id_lec FROM lec WHERE id_lec = %s", (lec_id,))
                 if not cur.fetchone():
@@ -1394,10 +1489,25 @@ def update_lec_log(lec_id: int, payload: LECLogUpdate) -> LECLog:
                 if payload.ip_lec is not None and has_ip_column:
                     updates.append(f"{ip_column} = %s")
                     params.append(payload.ip_lec)
+                elif payload.ip_host is not None and has_ip_column:
+                    updates.append(f"{ip_column} = %s")
+                    params.append(payload.ip_host)
 
                 if payload.device_name is not None and has_device_column:
                     updates.append("device_name = %s")
                     params.append(payload.device_name)
+
+                if payload.custom_name is not None and has_custom_name_column:
+                    updates.append("custom_name = %s")
+                    params.append(payload.custom_name)
+
+                if payload.hostname_lec is not None and has_hostname_column:
+                    updates.append("hostname_lec = %s")
+                    params.append(payload.hostname_lec)
+
+                if payload.manufacturer is not None and has_manufacturer_column:
+                    updates.append("manufacturer = %s")
+                    params.append(payload.manufacturer)
 
                 if payload.status_lec is not None:
                     updates.append(f"{status_column} = %s")
@@ -1421,6 +1531,7 @@ def update_lec_log(lec_id: int, payload: LECLogUpdate) -> LECLog:
                         ll.id_lec,
                         ll.fk_tenant,
                         t.customer_name,
+                        {custom_name_select} AS custom_name,
                         ll.file_location,
                         ll.last_event,
                         ll.seconds_since,
@@ -1428,7 +1539,10 @@ def update_lec_log(lec_id: int, payload: LECLogUpdate) -> LECLog:
                         ll.hours_since,
                         ll.threshold_minutes,
                         {ip_select},
+                        {ip_host_select} AS ip_host,
                         {device_select},
+                        {hostname_select},
+                        {manufacturer_select},
                         ll.{status_column} AS status_lec,
                         ll.{status_column} AS status,
                         ll.created_at,
@@ -1436,7 +1550,15 @@ def update_lec_log(lec_id: int, payload: LECLogUpdate) -> LECLog:
                     FROM lec ll
                     LEFT JOIN tenants t ON ll.fk_tenant = t.id_tenants
                     WHERE ll.id_lec = %s
-                    """.format(ip_select=ip_select, status_column=status_column, device_select=device_select),
+                    """.format(
+                        ip_select=ip_select,
+                        ip_host_select=ip_host_select,
+                        status_column=status_column,
+                        device_select=device_select,
+                        custom_name_select=custom_name_select,
+                        hostname_select=hostname_select,
+                        manufacturer_select=manufacturer_select,
+                    ),
                     (lec_id,)
                 )
                 result = cur.fetchone()
